@@ -1,0 +1,237 @@
+---
+title: "**Mall Customer Segmentation report**"
+author: "**Subhajit Karmakar**"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F,
+                      message = F)
+```
+
+<style type="text/css">
+    .main-container 
+    {
+        max-width: 80%;
+    }
+    body
+    {
+        font-family: Times New Roman;
+        font-size: 12pt;
+    }
+    .graph img 
+    {
+        max-width: 100%;
+    }
+</style>
+
+
+The data given to us contains information on customers in a particular supermarket. There are 5 variables in total. Our goal is to group the similar customers using **K-means** algorithm, based on the their purchase behavior.
+
+**Data source:** <https://www.kaggle.com/datasets/vjchoudhary7/customer-segmentation-tutorial-in-python>
+
+> <font size = '5'> **Necessary libraries & data importation** </font>
+
+```{r}
+library(tidyverse)
+library(factoextra)
+library(kableExtra)
+
+df <- read_csv('D:/Internships/Prodigy/Task 2 (Clustering)/Data2.csv',
+               show_col_types = F)
+```
+
+
+> <font size = '5'> **Glimpse at the data** </font>
+
+```{r, echo=FALSE}
+glimpse(df)
+```
+
+**Comment:** There are $\small 200$ rows and $\small 5$ columns in the data.
+
+<font size = '4'> **Checking for missing value** </font>
+```{r}
+df %>% is.na() %>% sum()
+```
+$\small \therefore$ There is no missing value in the data.
+
+<font size = '4'> **Summary statistics** </font>
+```{r, echo=FALSE}
+summary(df)
+```
+
+***
+***
+
+Here our task is to perform cluster analysis and we have two variables, first one is `CustomerID`, second one is `Gender` - IDs of customers is not useful in kmeans and gender is categorical variable, which we can not use in kmeans. So, we will ignore the `CustomerID` variable and will not analyze `Gender` variable too much.
+
+
+> <font size = '5'> **Univariate Analysis** </font>
+
+Plots to be used:
+
+* **Categorical:** Count-Plot $\big{[}$Variables: `Gender`$\big{]}$
+* **Continuous/Numerical:** Histogram $\big{[}$Variables: `Annual Income (k$)`, `Age`, `Spending Score (1-100)`$\big{]}$
+
+
+<font size = '4'> **Distribution of Gender** </font>
+
+```{r, fig.height=4, echo=FALSE}
+df %>% count(Gender) %>% 
+  ggplot(aes(x = Gender, y = n)) + 
+  geom_col(fill = 'violet', colour = 'blue',
+           width = 0.3) + theme_minimal() +
+  labs(y = 'Frequency\n', x = '\nGender')
+```
+
+
+<font size = '4'> **Distribution of Age** </font>
+
+```{r, echo=FALSE}
+hist_plot <- function(text){
+  df %>% ggplot(aes({{text}})) + geom_histogram(fill = 'lightyellow',
+                                           colour = 'red',
+                    aes(y = after_stat(density))) +
+    geom_density(colour = 'blue', lty = 2, lwd = 1) +
+    theme_minimal() + labs(y = 'Frequency density\n')
+}
+
+hist_plot(Age)
+```
+
+
+<font size = '4'> **Distribution of Annual Income** </font>
+
+```{r, echo=FALSE}
+hist_plot(`Annual Income (k$)`)
+```
+
+<font size = '4'> **Distribution of Spending Score** </font>
+
+```{r, echo=FALSE}
+hist_plot(`Spending Score (1-100)`)
+```
+
+
+
+> <font size = '5'> **Bivariate Analysis** </font>
+
+Plot to be used: Scatter-Plot and Contour-Plot.
+
+Here we are using contour plot to get an idea about the presence of clusters or peaks in the bivariate distributions of variables taking two at a time from the 3.
+
+
+<font size = '4'> **Plot 1: Distribution of Age and Annual Income** </font>
+
+```{r, echo=FALSE}
+cont_scat_plot <- function(var1, var2){
+  df %>% ggplot(aes(x = {{var1}}, y = {{var2}})) +
+    geom_point(colour = 'red') + 
+    geom_density_2d(aes(color = ..level..), bins = 15) +
+    scale_color_viridis_c() + 
+    theme_minimal()
+}
+
+cont_scat_plot(Age, `Annual Income (k$)`)
+```
+
+**Comment:** The plot is not so clear, it is roughly indicating 1 peak.
+
+<font size = '4'> **Plot 2: Distribution of Age and Spending Score** </font>
+
+```{r, echo=FALSE}
+cont_scat_plot(Age, `Spending Score (1-100)`)
+```
+
+**Comment:** This plot is more clear than the previous one, two peaks are clear in the joint distribution.
+
+<font size = '4'> **Plot 3: Distribution of Spending Score and Annual Income** </font>
+
+```{r, echo=FALSE}
+cont_scat_plot(`Spending Score (1-100)`, `Annual Income (k$)`)
+```
+
+**Comment:** Clear indication of 5 clusters is there.
+
+***
+***
+
+
+> <font size = '5'> **K-means Clustering** </font>
+
+Now that we are done with the EDA, we now proceed with the KMeans clustering. Since Euclidean distance is used here to calculate the distance of the points from the centroids, this algorithm is sensitive to the scale of the data, for that we first scale the data. Also, we have to omit the `CustomerID` and `Gender` from the data (reason mentioned earlier).
+
+* **Scaling method:** StandardScalar
+
+```{r}
+df %>% select(-c(CustomerID, Gender)) %>% 
+  scale() %>% as_tibble() -> df_active
+```
+
+```{r, echo=FALSE}
+df_active %>% head(5) %>% kbl(caption = 'First few rows of the Transformed data') %>% kable_styling(full_width = F, bootstrap_options = c("hover", "striped"))
+```
+
+
+* Note that, `df_active` will be used for the clustering.
+
+<font size = '4'> **Optimum number of Clusters** </font>
+
+Now, we have to find the optimum number of clusters which suits the data. We will consider different number of clusters and for that number of clusters after which the *within sum of squares* of the clusters will not decrease significantly, will be considered as the optimum number of clusters.
+
+* Consider the following code for the implementation of the above task
+
+```{r, fig.height=4}
+centers <- 1:10
+r <- 0
+
+for(i in 1:length(centers)){
+  set.seed(42)
+  k <- kmeans(df_active, centers[i])
+  r[i] <- k$tot.withinss/k$totss
+}
+
+ggplot(NULL, aes(x = centers, y = r)) +
+  geom_line(colour = 'red') + geom_point() +
+  geom_vline(xintercept = 6, lty = 2, colour = 'blue') +
+  theme_minimal() +
+  labs(x = '\nNumber of centroids', y = 'SS(within)/SS(total)\n') +
+  scale_x_continuous(n.breaks = 10)
+```
+
+**Comment:** So the optimum number of clusters we consider is 6. So, finally we go with 6 clusters and here $\small \dfrac{\text{Between Sum of Square}}{\text{Total Sum of Square}} = 0.78$
+
+<font size = '4'> **Final Grouping** </font>
+
+```{r}
+set.seed(42)
+
+K <- kmeans(df_active, centers = 6)
+df %>% mutate('Clusters' = K$cluster) -> df
+```
+
+
+The **centroids** of the clusters are listed below:
+```{r, echo=FALSE}
+K$centers %>% kbl(caption = 'Cluster centroids') %>% 
+  kable_styling(full_width = F)
+```
+
+
+<font size = '4'> **Cluster Visualization** </font>
+
+The clusters along with the customer IDs are shown below, from this one can get an idea about the status of the customers belonging to different groups/clusters.
+
+
+```{r, fig.height=6, fig.width=10}
+fviz_cluster(K, data = df_active, 
+             pointsize = 1, labelsize = 8,
+             ellipse.alpha = 0.1) +
+  theme_minimal()
+```
+
+
+
+<font size = '6'> **Thank You!** </font>
